@@ -1,23 +1,34 @@
 import '../../scss/swipe.scss'
 
 import Vue from 'vue'
+
+// Utils
 import { getTouch } from '../../utils'
+import mixins, { ExtractVue } from '../../utils/mixins'
 
 import SwipeItem from '../WSwipeItem'
 
 // Types
 type SwipeItemInstance = InstanceType<typeof SwipeItem>
 
+// Mixins
+import Touchable from '../../mixins/touchable'
+
 interface options extends Vue {
   timer: any
 }
 
-export default Vue.extend<options>().extend({
+export default mixins<options &
+  ExtractVue<[typeof Touchable]>
+>(Touchable).extend({
   name: 'w-swipe',
 
   props: {
+    width: Number,
     height: Number,
     autoplay: Number,
+    vertical: Boolean,
+    indicatorColor: String,
     defaultIndex: {
       type: Number,
       default: 0,
@@ -35,19 +46,30 @@ export default Vue.extend<options>().extend({
       type: Boolean,
       default: true,
     },
+    loop: {
+      type: Boolean,
+      default: true,
+    },
+    touchable: {
+      type: Boolean,
+      default: true,
+    },
   },
 
   data () {
     return {
-      width: 0 as number,
+      computedWidth: 0 as number,
+      computedHeight: 0 as number,
       offset: 0 as number,
       startX: 0 as number,
       startY: 0 as number,
       active: 0 as number,
       deltaX: 0 as number,
+      deltaY: 0 as number,
       swipes: [] as Array<SwipeItemInstance>,
       direction: '' as string,
       currentDuration: 0 as number,
+      swiping: false as boolean,
     }
   },
 
@@ -60,12 +82,20 @@ export default Vue.extend<options>().extend({
   },
 
   watch: {
-    swipes (): void {
+    swipes () {
       this.initialize()
     },
 
-    defaultIndex (): void {
+    defaultIndex () {
       this.initialize()
+    },
+
+    autoplay (autoplay) {
+      if (!autoplay) {
+        this.clear()
+      } else {
+        this.autoPlay()
+      }
     },
   },
 
@@ -74,10 +104,45 @@ export default Vue.extend<options>().extend({
       return this.swipes.length
     },
 
+    delta (): number {
+      return this.vertical ? this.deltaY : this.deltaX
+    },
+
+    size (): number {
+      return this.vertical ? this.computedHeight : this.computedWidth
+    },
+
+    trackSize (): number {
+      return this.count * this.size
+    },
+
+    isCorrectDirection (): boolean {
+      const expect = this.vertical ? 'vertical' : 'horizontal'
+      return this.direction === expect
+    },
+
+    trackStyle (): object {
+      const mainAxis = this.vertical ? 'height' : 'width'
+      const crossAxis = this.vertical ? 'width' : 'height'
+
+      return {
+        [mainAxis]: `${this.trackSize}px`,
+        [crossAxis]: this[crossAxis] ? `${this[crossAxis]}px`: '',
+        transitionDuration: `${this.swiping ? 0 : this.duration}ms`,
+        transform: `translate${this.vertical ? 'Y' : 'X'}(${this.offset}px)`,
+      }
+    },
+
+    indicatorStyle (): object {
+      return {
+        backgroundColor: this.indicatorColor,
+      }
+    },
+
     wrapperStyle (): object {
       let ret: any = {
-        paddingLeft: this.count > 1 ? this.width + 'px' : 0,
-        width: this.count > 1 ? (this.count + 2) * this.width + 'px' : '100%',
+        paddingLeft: this.count > 1 ? this.computedWidth + 'px' : 0,
+        width: this.count > 1 ? (this.count + 2) * this.computedWidth + 'px' : '100%',
         transitionDuration: `${this.currentDuration}ms`,
         transform: `translate3d(${this.offset}px, 0, 0)`,
       }
@@ -95,25 +160,31 @@ export default Vue.extend<options>().extend({
   },
 
   methods: {
-    initialize (): void {
+    initialize (active = this.defaultIndex): void {
       clearTimeout(this.timer)
       if (this.$el) {
-        this.width = this.$el.getBoundingClientRect().width
+        const rect = this.$el.getBoundingClientRect()
+        this.computedWidth = this.width || rect.width
+        this.computedHeight = this.height || rect.height
       }
-      this.active = this.defaultIndex
-      this.currentDuration = 0
-      this.offset = this.count > 1 ? -this.width * (this.active + 1) : 0
+      this.swiping = true
+      this.active = active
+      this.offset = this.count > 1 ? -this.size * this.active : 0
       this.swipes.forEach(swipe => {
         swipe.offset = 0
       })
       this.autoPlay()
     },
 
-    onTouchstart (e: TouchEvent): void {
-      if (this.count === 1 && this.noDragWhenSingle) {
-        return
-      }
+    onResize () {
+      this.initialize(this.activeIndicator)
+    },
 
+    onTouchstart (e: TouchEvent): void {
+      if (!this.touchable) return
+
+      this.clear()
+      this.swiping = true
       clearTimeout(this.timer)
       const touch = getTouch(e)
 
@@ -132,21 +203,14 @@ export default Vue.extend<options>().extend({
     },
 
     onTouchmove (e: TouchEvent): void {
-      if (this.prevent) {
+      if (!this.touchable || this.swiping) return
+
+
+
+      if (this.isCorrectDirection) {
         e.preventDefault()
-      }
-
-      const touch = getTouch(e)
-
-      this.deltaX = touch.clientX - this.startX
-      const deltaY = touch.clientY - this.startY
-
-      if (this.count === 1) {
-        if (this.noDragWhenSingle) return
-
-        this.offset = this.range(this.deltaX, [-20, 20])
-      } else if (this.count > 1 && Math.abs(this.deltaX) > Math.abs(deltaY)) {
-        this.move(0, this.range(this.deltaX, [-this.width, this.width]))
+        e.stopPropagation()
+        this.move({ offset: Math.min(Math.max(this.delta, -this.size), this.size) })
       }
     },
 
@@ -165,40 +229,56 @@ export default Vue.extend<options>().extend({
       }
     },
 
-    move (move: number = 0, offset: number = 0): void {
-      const { active, count, swipes, deltaX, width } = this
+    move ({page = 0, offset = 0, emitChange }): void {
+      const { delta, active, count, swipes, trackSize } = this
+      const atFirst = active === 0
+      const atLast = active === count - 1
+      const outOfBounds =
+        !this.loop &&
+        ((atFirst && (offset > 0 || pace < 0)) || (atLast && (offset < 0 || pace > 0)))
 
-      if (move) {
-        if (active === -1) {
-          swipes[count - 1].offset = 0
-        }
-        swipes[0].offset = active === count - 1 && move > 0 ? count * width : 0
+      if (outOfBounds || count <= 1) {
+        return
+      }
 
-        this.active += move
-      } else {
-        if (active === 0) {
-          swipes[count - 1].offset = deltaX > 0 ? -count * width : 0
-        } else if (active === count - 1) {
-          swipes[0].offset = deltaX < 0 ? count * width : 0
+      if (swipes[0]) {
+        swipes[0].offset = atLast && (delta < 0 || pace > 0) ? trackSize : 0
+      }
+
+      if (swipes[count - 1]) {
+        swipes[count - 1].offset = atFirst && (delta > 0 || pace < 0) ? -trackSize : 0
+      }
+
+      if (pace && active + pace >= -1 && active + pace <= count) {
+        this.active += pace
+
+        if (emitChange) {
+          this.$emit('change', this.activeIndicator)
         }
       }
-      this.offset = offset - (this.active + 1) * this.width
+
+      this.offset = Math.round(offset - this.active * this.size)
+    },
+
+    correctPosition (): void {
+
     },
 
     autoPlay (): void {
       const { autoplay } = this
       if (autoplay && this.count > 1) {
-        clearTimeout(this.timer)
+        this.clear()
         this.timer = setTimeout(() => {
-          this.currentDuration = 0
-
-          if (this.active >= this.count) {
-            this.move(-this.count)
-          }
+          this.swiping = true
+          this.resetTouchStatus()
+          this.correctPosition()
 
           setTimeout(() => {
-            this.currentDuration = this.duration
-            this.move(1)
+            this.swiping = false
+            this.move({
+              page: 1,
+              emitChange: true,
+            })
             this.autoPlay()
           }, 30)
         }, autoplay)
@@ -210,35 +290,43 @@ export default Vue.extend<options>().extend({
     },
   },
 
+  clear (): void {
+    clearTimeout(this.timer)
+  },
+
   render (h) {
+    const { count, activeIndicator } = this
+
+    const Indicator = this.$slots.indicator || (
+      this.showIndicators && count > 1 &&
+      <div class="wv-swipe__indicators">
+        {
+          Array(...Array(count)).map((empty, index) => (
+            <i
+              key={index}
+              class={{ 'wv-swipe__indicator--active': index === activeIndicator }}
+            />
+          ))
+        }
+      </div>
+    )
+
     return (
       <div
         class="wv-swipe"
-        onTouchstart={(e: TouchEvent) => { this.onTouchstart(e) }}
-        onTouchmove={(e: TouchEvent) => { this.onTouchmove(e) }}
-        onTouchend={() => { this.onTouchend() }}
-        onTouchcancel={() => { this.onTouchend() }}
+        onTouchstart={this.onTouchstart}
+        onTouchmove={this.onTouchmove}
+        onTouchend={this.onTouchend}
+        onTouchcancel={this.onTouchend}
       >
         <div
           style={this.wrapperStyle}
           class="wv-swipe__wrapper"
-          onTransitionend={() => { this.$emit('change', this.activeIndicator) }}
+          onTransitionend={() => { this.$emit('change', activeIndicator) }}
         >
           {this.$slots.default}
         </div>
-        {
-          this.showIndicators && this.count > 1 &&
-            <div class="wv-swipe__indicators">
-              {
-                (new Array(this.count)).map(index => (
-                  <i
-                    key={index}
-                    class={{ 'wv-swipe__indicator--active': index - 1 === this.activeIndicator }}
-                  />
-                ))
-              }
-            </div>
-        }
+        {Indicator}
       </div>
     )
   },
