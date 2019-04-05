@@ -8,12 +8,12 @@ import mixins, { ExtractVue } from '../../utils/mixins'
 
 import SwipeItem from '../WSwipeItem'
 
-// Types
-type SwipeItemInstance = InstanceType<typeof SwipeItem>
-
 // Mixins
 import Touchable from '../../mixins/touchable'
 
+type SwipeItemInstance = InstanceType<typeof SwipeItem>
+
+// Types
 interface options extends Vue {
   timer: any
 }
@@ -61,14 +61,10 @@ export default mixins<options &
       computedWidth: 0 as number,
       computedHeight: 0 as number,
       offset: 0 as number,
-      startX: 0 as number,
-      startY: 0 as number,
       active: 0 as number,
       deltaX: 0 as number,
       deltaY: 0 as number,
       swipes: [] as Array<SwipeItemInstance>,
-      direction: '' as string,
-      currentDuration: 0 as number,
       swiping: false as boolean,
     }
   },
@@ -127,7 +123,7 @@ export default mixins<options &
 
       return {
         [mainAxis]: `${this.trackSize}px`,
-        [crossAxis]: this[crossAxis] ? `${this[crossAxis]}px`: '',
+        [crossAxis]: this[crossAxis] ? `${this[crossAxis]}px` : '',
         transitionDuration: `${this.swiping ? 0 : this.duration}ms`,
         transform: `translate${this.vertical ? 'Y' : 'X'}(${this.offset}px)`,
       }
@@ -186,13 +182,6 @@ export default mixins<options &
       this.clear()
       this.swiping = true
       clearTimeout(this.timer)
-      const touch = getTouch(e)
-
-      this.deltaX = 0
-      this.direction = ''
-      this.currentDuration = 0
-      this.startX = touch.clientX
-      this.startY = touch.clientY
 
       if (this.active <= -1) {
         this.move(this.count)
@@ -205,7 +194,7 @@ export default mixins<options &
     onTouchmove (e: TouchEvent): void {
       if (!this.touchable || this.swiping) return
 
-
+      // TODO
 
       if (this.isCorrectDirection) {
         e.preventDefault()
@@ -219,17 +208,15 @@ export default mixins<options &
         if (this.noDragWhenSingle) return
 
         this.offset = 0
-        this.currentDuration = this.duration
       } else {
         if (this.deltaX) {
           this.move(Math.abs(this.deltaX) > 50 ? (this.deltaX > 0 ? -1 : 1) : 0)
-          this.currentDuration = this.duration
         }
         this.autoPlay()
       }
     },
 
-    move ({page = 0, offset = 0, emitChange }): void {
+    move ({ pace = 0, offset = 0, emitChange }): void {
       const { delta, active, count, swipes, trackSize } = this
       const atFirst = active === 0
       const atLast = active === count - 1
@@ -260,8 +247,34 @@ export default mixins<options &
       this.offset = Math.round(offset - this.active * this.size)
     },
 
-    correctPosition (): void {
+    swipeTo (index: number): void {
+      this.swiping = true
+      this.resetTouchStatus()
+      this.correctPosition()
+      setTimeout(() => {
+        this.swiping = false
+        this.move({
+          pace: (index % this.count) - this.active,
+          emitChange: true,
+        })
+      }, 30)
+    },
 
+    correctPosition (): void {
+      if (this.active <= -1) {
+        this.move({ pace: this.count })
+      }
+      if (this.active >= this.count) {
+        this.move({ pace: -this.count })
+      }
+    },
+
+    range (num: number, arr: number[]): number {
+      return Math.min(Math.max(num, arr[0]), arr[1])
+    },
+
+    clear (): void {
+      clearTimeout(this.timer)
     },
 
     autoPlay (): void {
@@ -276,7 +289,7 @@ export default mixins<options &
           setTimeout(() => {
             this.swiping = false
             this.move({
-              page: 1,
+              pace: 1,
               emitChange: true,
             })
             this.autoPlay()
@@ -284,14 +297,6 @@ export default mixins<options &
         }, autoplay)
       }
     },
-
-    range (num: number, arr: number[]): number {
-      return Math.min(Math.max(num, arr[0]), arr[1])
-    },
-  },
-
-  clear (): void {
-    clearTimeout(this.timer)
   },
 
   render (h) {
@@ -305,6 +310,7 @@ export default mixins<options &
             <i
               key={index}
               class={{ 'wv-swipe__indicator--active': index === activeIndicator }}
+              style={index === activeIndicator ? this.indicatorStyle : null}
             />
           ))
         }
@@ -312,17 +318,15 @@ export default mixins<options &
     )
 
     return (
-      <div
-        class="wv-swipe"
-        onTouchstart={this.onTouchstart}
-        onTouchmove={this.onTouchmove}
-        onTouchend={this.onTouchend}
-        onTouchcancel={this.onTouchend}
-      >
+      <div class="wv-swipe">
         <div
-          style={this.wrapperStyle}
+          style={this.trackStyle}
           class="wv-swipe__wrapper"
-          onTransitionend={() => { this.$emit('change', activeIndicator) }}
+          ref="track"
+          onTouchstart={this.onTouchstart}
+          onTouchmove={this.onTouchmove}
+          onTouchend={this.onTouchend}
+          onTouchcancel={this.onTouchend}
         >
           {this.$slots.default}
         </div>
